@@ -1,23 +1,10 @@
 import time
 import uuid
+from socket import socket, AF_INET, SOCK_DGRAM
+from threading import Thread
+import json
 
-CHUNK_SIZE = 64         # 64 KB
-CACHE_SIZE = 125000     # 125 MB
-MAX_TT_SIZE = 287600    # 287.6 MB
-AVG_TT_SIZE = 22000     # 22 MB = average size of 35s video, 1080p, 5 Mbps bitrate
-
-## Full video
-class Video:
-        def __init__(self):
-                self.uid = uuid.uuid4()
-                self.size = AVG_TT_SIZE
-
-## Part of video that lives in node's cache
-class Cached_video:
-        def __init__(self, id, my_chunks = []):
-                self.id = id
-                self.my_chunks = my_chunks
-                self.added = time.time()
+from common import CACHE_SIZE, CHUNK_SIZE, SERVER_ADDR, BUFFER_SIZE, Cached_Video, Video
 
 ## Node class 
 class Node:
@@ -26,6 +13,8 @@ class Node:
                 self.peers = []  # peer uids
                 self.cache = {}  # video cache: {video_id: {Cached_video}}
                 self.cache_space = CACHE_SIZE
+                self.sock = socket(AF_INET, SOCK_DGRAM) # udp socket
+
 
         # evict oldest item in cache
         def evict_cache(self):
@@ -45,7 +34,7 @@ class Node:
                 if(self.cache_is_full()):
                         self.evict_cache()
                 
-                cache_entry = Cached_video(video.uid, [0])
+                cache_entry = Cached_Video(video.uid, [0])
 
                 self.cache[video.uid] = cache_entry
                 self.print_cache()
@@ -54,6 +43,22 @@ class Node:
         def print_cache(self):
               for chunk in self.cache.values():
                     print(chunk.id, chunk.my_chunks, chunk.added)
+                    
+        def request_server(self):
+              request = {'request': 'GET_MANIFEST'}
+              
+              request_data = json.dumps(request).encode()
+              
+              self.sock.sendto(request_data, SERVER_ADDR)
+              
+              response_data, _ = self.sock.recvfrom(BUFFER_SIZE)
+              
+              response = json.loads(response_data.decode())
+              
+              print(response)
+              
+              
+
 
 
 if __name__ == "__main__":
@@ -61,5 +66,7 @@ if __name__ == "__main__":
         n = Node()
         n.add_to_cache(v)
         n.print_cache()
+        
+        n.request_server()
         
         print("Hello")

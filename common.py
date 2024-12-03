@@ -11,7 +11,7 @@ BUFFER_SIZE = 2096
 ## Full video
 class Video:
         def __init__(self):
-                self.uid = uuid.uuid4()
+                self.uid = str(uuid.uuid4())
                 self.size = AVG_TT_SIZE
 
 ## Part of video that lives in node's cache
