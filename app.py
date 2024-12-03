@@ -13,13 +13,16 @@ class Node:
                 self.peers = []  # peer uids
                 self.cache = {}  # video cache: {video_id: {Cached_video}}
                 self.cache_space = CACHE_SIZE
-                self.register = False
-                
+                self.registered = False
+                self.manifest = []
                 
                 self.port = random.randrange(1025, 60000)
                 self.addr = ('127.0.0.1', self.port)
                 self.sock = socket(AF_INET, SOCK_DGRAM) # udp socket
                 self.sock.bind(self.addr)
+                self.requests = []
+                self.results = {}
+              
 
 
         # evict oldest item in cache
@@ -50,14 +53,19 @@ class Node:
               for chunk in self.cache.values():
                     print(chunk.id, chunk.my_chunks, chunk.added)
                     
-        def request_server(self, op):
-              request = {'request': op, 'id': str(uuid.uuid4())}
+        def request_server(self, request, video_uid=None, chunk_id=None):
+              rid = str(uuid.uuid4())
+              request = {'request': request, 'id': rid, 'video_uid': video_uid, 'chunk_id': chunk_id}
               
               print(f'{self.addr}: {request}')
               
               request_data = json.dumps(request).encode()
               
+              self.requests.append(rid)
+              
               self.sock.sendto(request_data, SERVER_ADDR)
+              
+              return rid
 
               
         def request_peer(self):
@@ -65,13 +73,29 @@ class Node:
         
         # handle all requests/response   
         def handle(self, data, addr):
+          
               # check if server response
               if addr == SERVER_ADDR:
                       response = json.loads(data.decode())
                       print(f'{addr}: {response}')
+                      
+                      match response['request']:
+                              # check if registration was successful
+                              case 'REGISTER':
+                                      self.registered = True
+                              # check if response to manifest request
+                              case 'GET_MANIFEST':
+                                      self.manifest = response['manifest']
+                                      self.results[response['id']] = response['manifest']
+                              # check if response to chunk mapping request
+                              case 'GET_CHUNK_MAPPING':
+                                      self.results[response['id']] = response['mapping']
+                              
               # else, something from peer
               else:
                       pass
+              
+              self.requests.remove(response['id'])
         
         # listen for peer/server requests/response    
         def listen(self):
@@ -87,7 +111,19 @@ if __name__ == "__main__":
         n = Node()
         listen_thread = Thread(target=n.listen, daemon=True, args=())
         listen_thread.start()
-        n.request_server('REGISTER') 
-        time.sleep(5)
-        n.request_server('DEREGISTER')
-        time.sleep(5)
+        rid = n.request_server('REGISTER') 
+        while rid in n.requests:
+                time.sleep(.1)
+        rid = n.request_server('GET_MANIFEST')
+        while rid in n.requests:
+                time.sleep(.1)
+        video_uid = random.choice(n.manifest)
+        rid = n.request_server('GET_CHUNK_MAPPING', video_uid)
+        while rid in n.requests:
+                time.sleep(.1)
+        for chunk_id, peer_list in n.results[rid].items():
+                if peer_list == []:
+                        print(video_uid, chunk_id)
+        rid = n.request_server('DEREGISTER')
+        while rid in n.requests:
+                time.sleep(.1)

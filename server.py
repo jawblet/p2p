@@ -10,30 +10,50 @@ class Server:
         def __init__(self):
                 self.uid = uuid.uuid4()
                 self.peers = []  # peer addrs
-                self.chunk_mapping = {} # video mapping: {video_id : {chunk_id : [peer addr list]}}
-                self.chunks = {}  # video chunks: {video_id: [chunk_id list]}
+                self.video_chunk_to_peer = {} # video mapping: {video_uid : {chunk_id : [peer addr list]}}
+                self.video_to_chunk = {}  # video chunks: {video_uid: [chunk_id list]}
                 self.sock = socket(AF_INET, SOCK_DGRAM) #udp socket
                 self.sock.bind(SERVER_ADDR)
 
         def bootstrap(self):
                 for _ in range(0,10):
                         v = Video()
-                        self.chunks[v.uid] = {}
+                        self.video_to_chunk[v.uid] = v.chunks
+                        self.video_chunk_to_peer[v.uid] = {}                        
+                        for c in v.chunks:
+                                self.video_chunk_to_peer[v.uid][c] = []
+                print(self.video_to_chunk)
+                print(self.video_chunk_to_peer)
         
         # handle peer request 
         def handle_request(self, request_data, addr):
                 request = json.loads(request_data.decode())
                 print(f'{addr}: {request}')
                 
-                # register peer
-                if request['request'] == 'REGISTER':
-                        if addr not in self.peers:
-                                self.peers.append(addr)
-                        response = {'request': request['request'], 'id': request['id'], 'status': 'DONE'}
-                elif request['request'] == 'DEREGISTER':
-                        if addr in self.peers:
-                                self.peers.remove(addr)
-                        response = {'request': request['request'], 'id': request['id'], 'status': 'DONE'}
+                response = {'request': request['request'], 'id': request['id']}
+                
+                match request['request']:
+                        # register peer
+                        case 'REGISTER':
+                                if addr not in self.peers:
+                                        self.peers.append(addr)
+                                response['status'] = 'DONE'
+                        # deregister peer
+                        case 'DEREGISTER':
+                                if addr in self.peers:
+                                        self.peers.remove(addr)
+                                response['status'] = 'DONE'
+                        # get full video list
+                        case 'GET_MANIFEST':
+                                response['manifest'] = list(self.video_to_chunk.keys())
+                        # get full peer list
+                        case 'GET_PEERS':
+                                response['peers'] = self.peers
+                        # get mapping from video to 
+                        case 'GET_CHUNK_MAPPING':
+                                response['mapping'] = self.video_chunk_to_peer[request['video_uid']]
+                        case _:
+                                response['status'] = 'ERROR'
                         
                 # respond to peer
                 data = json.dumps(response).encode()
@@ -45,10 +65,6 @@ class Server:
                         data, addr = self.sock.recvfrom(BUFFER_SIZE)
                         request_thread = Thread(target=self.handle_request, daemon=True, args=(data, addr,))
                         request_thread.start()
-        
-        # register peer
-        def register_peer(self):
-                pass
               
               
 if __name__ == "__main__":
