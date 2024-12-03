@@ -16,6 +16,7 @@ class Node:
                 self.registered = False
                 self.manifest = []
                 
+                self.id = None
                 self.port = random.randrange(1025, 60000)
                 self.addr = ('127.0.0.1', self.port)
                 self.sock = socket(AF_INET, SOCK_DGRAM) # udp socket
@@ -56,11 +57,25 @@ class Node:
                 if(self.cache_is_full()):
                         self.evict_cache()
                 
-                cache_entry = Cached_Video(video.uid, [0])
+                chunks = video.size / CHUNK_SIZE
+                num_peers = len(self.peers)
+                for i in range(chunks):
+                        (i % num_peers == (self.id + 1) % num_peers)
+                        if(self.cache_is_full()):
+                                self.evict_cache()
 
-                self.cache[video.uid] = cache_entry
+                        cache_entry = Cached_Video(video.uid, i)
+                        self.cache[video.uid] = cache_entry
                 self.print_cache()
 
+        # check if chunk is in my cache
+        def lookup_in_cache(self, video_id, chunk):
+                if video_id in self.cache:
+                        lookup = self.cache[video_id]
+                        if chunk in lookup:
+                                return chunk
+                        
+                return None
 
         def print_cache(self):
               for chunk in self.cache.values():
@@ -86,16 +101,15 @@ class Node:
         
         # handle all requests/response   
         def handle(self, data, addr):
-          
               # check if server response
               if addr == SERVER_ADDR:
                       response = json.loads(data.decode())
                       print(f'{addr}: {response}')
-                      
                       match response['request']:
                               # check if registration was successful
                               case 'REGISTER':
                                       self.registered = True
+                                      self.id = response['peer_id']
                               # check if response to manifest request
                               case 'GET_MANIFEST':
                                       self.manifest = response['data']
@@ -119,9 +133,7 @@ class Node:
                 while True:
                         data, addr = self.sock.recvfrom(BUFFER_SIZE)
                         request_thread = Thread(target=self.handle, daemon=True, args=(data, addr,))
-                        request_thread.start()      
-            
-  
+                        request_thread.start()
 
 if __name__ == "__main__":
         n = Node()
