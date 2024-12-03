@@ -23,9 +23,20 @@ class Node:
                 self.requests = []
                 self.results = {}
               
+        # wait for server response
         def wait_response(self, request_id):
                 while request_id in n.requests:
                         time.sleep(.1)
+                        
+        def get_video(self, video_uid):
+                rid = n.request_server('GET_CHUNK_MAPPING', video_uid)
+                for chunk_id, peer_list in n.results[rid].items():
+                        if peer_list == []:
+                                # REQUEST VIDEO FROM SERVER
+                                print(video_uid, chunk_id)
+                        else:
+                                # REQUEST FROM PEERS
+                                pass
 
         # evict oldest item in cache
         def evict_cache(self):
@@ -89,17 +100,21 @@ class Node:
                                       self.registered = True
                               # check if response to manifest request
                               case 'GET_MANIFEST':
-                                      self.manifest = response['manifest']
-                                      self.results[response['id']] = response['manifest']
+                                      self.manifest = response['data']
                               # check if response to chunk mapping request
                               case 'GET_CHUNK_MAPPING':
-                                      self.results[response['id']] = response['mapping']
+                                      pass
+                              # check if response to chunk request
+                              case 'GET_CHUNK':
+                                
+                                      pass
                               
               # else, something from peer
               else:
                       pass
               
               self.requests.remove(response['id'])
+              self.results[response['id']] = response['data']
         
         # listen for peer/server requests/response    
         def listen(self):
@@ -119,14 +134,7 @@ if __name__ == "__main__":
                 
         # GET CERTAIN VIDEO
         video_uid = random.choice(n.manifest)
-        rid = n.request_server('GET_CHUNK_MAPPING', video_uid)
-        for chunk_id, peer_list in n.results[rid].items():
-                if peer_list == []:
-                        # REQUEST VIDEO FROM SERVER
-                        print(video_uid, chunk_id)
-                else:
-                        # REQUEST FROM PEERS
-                        pass
+        n.get_video(video_uid)
                         
         # DEREGISTER
         n.request_server('DEREGISTER')

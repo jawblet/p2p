@@ -3,6 +3,7 @@ import uuid
 from socket import socket, AF_INET, SOCK_DGRAM
 from threading import Thread
 import json
+import random
 
 from common import CACHE_SIZE, CHUNK_SIZE, SERVER_ADDR, BUFFER_SIZE, Cached_Video, Video
 
@@ -37,23 +38,25 @@ class Server:
                         case 'REGISTER':
                                 if addr not in self.peers:
                                         self.peers.append(addr)
-                                response['status'] = 'DONE'
+                                response['data'] = 'DONE'
                         # deregister peer
                         case 'DEREGISTER':
                                 if addr in self.peers:
                                         self.peers.remove(addr)
-                                response['status'] = 'DONE'
+                                response['data'] = 'DONE'
                         # get full video list
                         case 'GET_MANIFEST':
-                                response['manifest'] = list(self.video_to_chunk.keys())
+                                response['data'] = list(self.video_to_chunk.keys())
                         # get full peer list
                         case 'GET_PEERS':
-                                response['peers'] = self.peers
+                                response['data'] = self.peers
                         # get mapping from video to 
                         case 'GET_CHUNK_MAPPING':
-                                response['mapping'] = self.video_chunk_to_peer[request['video_uid']]
+                                response['data'] = self.video_chunk_to_peer[request['video_uid']]
+                        case 'GET_CHUNK':
+                                response['data'] = 'DATA'
                         case _:
-                                response['status'] = 'ERROR'
+                                response['data'] = 'ERROR'
                         
                 # respond to peer
                 data = json.dumps(response).encode()
