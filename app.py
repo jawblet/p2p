@@ -109,7 +109,7 @@ class Node:
                               # check if registration was successful
                               case 'REGISTER':
                                       self.registered = True
-                                      self.id = response['peer_id']
+                                      self.id = response['data']
                               # check if response to manifest request
                               case 'GET_MANIFEST':
                                       self.manifest = response['data']

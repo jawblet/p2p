@@ -38,7 +38,7 @@ class Server:
                         case 'REGISTER':
                                 if addr not in self.peers:
                                         self.peers.append(addr)
-                                response['data'] = 'DONE'
+                                response['data'] = len(self.peers) - 1
                         # deregister peer
                         case 'DEREGISTER':
                                 if addr in self.peers:
