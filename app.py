@@ -3,17 +3,23 @@ import uuid
 from socket import socket, AF_INET, SOCK_DGRAM
 from threading import Thread
 import json
+import random
 
 from common import CACHE_SIZE, CHUNK_SIZE, SERVER_ADDR, BUFFER_SIZE, Cached_Video, Video
 
 ## Node class 
 class Node:
         def __init__(self):
-                self.uid = uuid.uuid4()
                 self.peers = []  # peer uids
                 self.cache = {}  # video cache: {video_id: {Cached_video}}
                 self.cache_space = CACHE_SIZE
+                self.register = False
+                
+                
+                self.port = random.randrange(1025, 60000)
+                self.addr = ('127.0.0.1', self.port)
                 self.sock = socket(AF_INET, SOCK_DGRAM) # udp socket
+                self.sock.bind(self.addr)
 
 
         # evict oldest item in cache
@@ -44,29 +50,44 @@ class Node:
               for chunk in self.cache.values():
                     print(chunk.id, chunk.my_chunks, chunk.added)
                     
-        def request_server(self):
-              request = {'request': 'GET_MANIFEST'}
+        def request_server(self, op):
+              request = {'request': op, 'id': str(uuid.uuid4())}
+              
+              print(f'{self.addr}: {request}')
               
               request_data = json.dumps(request).encode()
               
               self.sock.sendto(request_data, SERVER_ADDR)
+
               
-              response_data, _ = self.sock.recvfrom(BUFFER_SIZE)
-              
-              response = json.loads(response_data.decode())
-              
-              print(response)
-              
+        def request_peer(self):
+              pass
+        
+        # handle all requests/response   
+        def handle(self, data, addr):
+              # check if server response
+              if addr == SERVER_ADDR:
+                      response = json.loads(data.decode())
+                      print(f'{addr}: {response}')
+              # else, something from peer
+              else:
+                      pass
+        
+        # listen for peer/server requests/response    
+        def listen(self):
+                while True:
+                        data, addr = self.sock.recvfrom(BUFFER_SIZE)
+                        request_thread = Thread(target=self.handle, daemon=True, args=(data, addr,))
+                        request_thread.start()      
               
 
 
 
 if __name__ == "__main__":
-        v = Video()
         n = Node()
-        n.add_to_cache(v)
-        n.print_cache()
-        
-        n.request_server()
-        
-        print("Hello")
+        listen_thread = Thread(target=n.listen, daemon=True, args=())
+        listen_thread.start()
+        n.request_server('REGISTER') 
+        time.sleep(5)
+        n.request_server('DEREGISTER')
+        time.sleep(5)

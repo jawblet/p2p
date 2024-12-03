@@ -9,8 +9,8 @@ from common import CACHE_SIZE, CHUNK_SIZE, SERVER_ADDR, BUFFER_SIZE, Cached_Vide
 class Server:
         def __init__(self):
                 self.uid = uuid.uuid4()
-                self.peers = []  # peer uids
-                self.chunk_mapping = {} # video mapping: {video_id : {chunk_id : [peer list]}}
+                self.peers = []  # peer addrs
+                self.chunk_mapping = {} # video mapping: {video_id : {chunk_id : [peer addr list]}}
                 self.chunks = {}  # video chunks: {video_id: [chunk_id list]}
                 self.sock = socket(AF_INET, SOCK_DGRAM) #udp socket
                 self.sock.bind(SERVER_ADDR)
@@ -25,15 +25,19 @@ class Server:
                 request = json.loads(request_data.decode())
                 print(f'{addr}: {request}')
                 
-                # get list of available videos
-                if request['request'] == 'GET_MANIFEST':
-                        response = {'videos': list(self.chunks.keys()), 'timestamp': time.time()}
-                
+                # register peer
+                if request['request'] == 'REGISTER':
+                        if addr not in self.peers:
+                                self.peers.append(addr)
+                        response = {'request': request['request'], 'id': request['id'], 'status': 'DONE'}
+                elif request['request'] == 'DEREGISTER':
+                        if addr in self.peers:
+                                self.peers.remove(addr)
+                        response = {'request': request['request'], 'id': request['id'], 'status': 'DONE'}
+                        
                 # respond to peer
                 data = json.dumps(response).encode()
-                self.sock.sendto(data, addr)
-                        
-              
+                self.sock.sendto(data, addr)                             
               
         # listen for peer requests    
         def listen(self):
