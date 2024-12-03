@@ -23,7 +23,9 @@ class Node:
                 self.requests = []
                 self.results = {}
               
-
+        def wait_response(self, request_id):
+                while request_id in n.requests:
+                        time.sleep(.1)
 
         # evict oldest item in cache
         def evict_cache(self):
@@ -65,6 +67,8 @@ class Node:
               
               self.sock.sendto(request_data, SERVER_ADDR)
               
+              self.wait_response(rid)
+              
               return rid
 
               
@@ -103,27 +107,26 @@ class Node:
                         data, addr = self.sock.recvfrom(BUFFER_SIZE)
                         request_thread = Thread(target=self.handle, daemon=True, args=(data, addr,))
                         request_thread.start()      
-              
-
-
+            
+  
 
 if __name__ == "__main__":
         n = Node()
         listen_thread = Thread(target=n.listen, daemon=True, args=())
         listen_thread.start()
-        rid = n.request_server('REGISTER') 
-        while rid in n.requests:
-                time.sleep(.1)
-        rid = n.request_server('GET_MANIFEST')
-        while rid in n.requests:
-                time.sleep(.1)
+        n.request_server('REGISTER') 
+        n.request_server('GET_MANIFEST')
+                
+        # GET CERTAIN VIDEO
         video_uid = random.choice(n.manifest)
         rid = n.request_server('GET_CHUNK_MAPPING', video_uid)
-        while rid in n.requests:
-                time.sleep(.1)
         for chunk_id, peer_list in n.results[rid].items():
                 if peer_list == []:
+                        # REQUEST VIDEO FROM SERVER
                         print(video_uid, chunk_id)
-        rid = n.request_server('DEREGISTER')
-        while rid in n.requests:
-                time.sleep(.1)
+                else:
+                        # REQUEST FROM PEERS
+                        pass
+                        
+        # DEREGISTER
+        n.request_server('DEREGISTER')
