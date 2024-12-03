@@ -26,14 +26,14 @@ class Node:
         # wait for server response
         def wait_response(self, request_id):
                 while request_id in n.requests:
-                        time.sleep(.1)
+                        time.sleep(.01)
                         
         def get_video(self, video_uid):
                 rid = n.request_server('GET_CHUNK_MAPPING', video_uid)
                 for chunk_id, peer_list in n.results[rid].items():
                         if peer_list == []:
                                 # REQUEST VIDEO FROM SERVER
-                                print(video_uid, chunk_id)
+                                self.request_server('GET_CHUNK', video_uid, chunk_id)
                         else:
                                 # REQUEST FROM PEERS
                                 pass
@@ -69,9 +69,7 @@ class Node:
         def request_server(self, request, video_uid=None, chunk_id=None):
               rid = str(uuid.uuid4())
               request = {'request': request, 'id': rid, 'video_uid': video_uid, 'chunk_id': chunk_id}
-              
               print(f'{self.addr}: {request}')
-              
               request_data = json.dumps(request).encode()
               
               self.requests.append(rid)
