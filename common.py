@@ -19,9 +19,10 @@ class Video:
 
 
 ## Part of video that lives in node's cache
-class Cached_Video:
-        def __init__(self, id, my_chunks = []):
-                self.id = id
-                self.my_chunks = my_chunks
+class Cached_Video_Chunk:
+        def __init__(self, video_uid, chunk_id, data):
+                self.video_uid = video_uid
+                self.chunk_id = chunk_id
+                self.data = data
                 self.added = time.time()
                 

@@ -4,8 +4,9 @@ from socket import socket, AF_INET, SOCK_DGRAM
 from threading import Thread
 import json
 import random
+import zlib
 
-from common import CACHE_SIZE, CHUNK_SIZE, SERVER_ADDR, BUFFER_SIZE, Cached_Video, Video
+from common import CACHE_SIZE, CHUNK_SIZE, SERVER_ADDR, BUFFER_SIZE, Video
 
 class Server:
         def __init__(self):
@@ -21,8 +22,8 @@ class Server:
                         v = Video()
                         self.video_to_chunk[v.uid] = v.chunks
                         self.video_chunk_to_peer[v.uid] = {}                        
-                        for c in v.chunks:
-                                self.video_chunk_to_peer[v.uid][c] = []
+                        for chunk_id in v.chunks:
+                                self.video_chunk_to_peer[v.uid][str(chunk_id)] = []
                 print(self.video_to_chunk)
                 print(self.video_chunk_to_peer)
         
@@ -52,14 +53,19 @@ class Server:
                                 response['data'] = self.peers
                         # get mapping from video to 
                         case 'GET_CHUNK_MAPPING':
+                                response['video_uid'] = request['video_uid']
                                 response['data'] = self.video_chunk_to_peer[request['video_uid']]
+                                print(response['data'])
                         case 'GET_CHUNK':
+                                self.video_chunk_to_peer[request['video_uid']][request['chunk_id']].append(addr)
+                                response['video_uid'] = request['video_uid']
+                                response['chunk_id'] = request['chunk_id']
                                 response['data'] = 'DATA'
                         case _:
                                 response['data'] = 'ERROR'
                         
                 # respond to peer
-                data = json.dumps(response).encode()
+                data = zlib.compress(json.dumps(response).encode())
                 self.sock.sendto(data, addr)                             
               
         # listen for peer requests    
