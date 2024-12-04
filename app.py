@@ -61,20 +61,21 @@ class Node:
                         self.evict_cache()
               
                 cache_entry = Cached_Video_Chunk(video_uid, chunk_id, data)
-                self.cache[video_uid] = {chunk_id : cache_entry}
-                #self.print_cache()
+                if video_uid not in self.cache.keys():
+                        self.cache[video_uid] = {}
+                self.cache[video_uid][chunk_id] = cache_entry
+                self.print_cache()
 
         # check if chunk is in my cache
         def lookup_in_cache(self, video_uid, chunk_id):
                 if video_uid in self.cache.keys():
                         if chunk_id in self.cache[video_uid].keys():
-                                return chunk_id
+                                return self.cache[video_uid][chunk_id]
                         
                 return None
 
         def print_cache(self):
-              for video_uid in self.cache.keys():
-                    print(video_uid, list(self.cache[video_uid].keys()), max(list(self.cache[video_uid].values().added)))
+              print(self.cache)
                     
         def request_server(self, request, video_uid=None, chunk_id=None):
               rid = str(uuid.uuid4())
@@ -133,19 +134,30 @@ class Node:
                 # else, request/response from peer
                 else:
                         tmp = json.loads(data.decode())
+                        print(f'{addr}: {tmp}')
                         
                         # check if response to request
                         if tmp['id'] in self.requests:
                                 response = tmp
-
+                                if self.lookup_in_cache(response['video_uid'], response['chunk_id']) == None:
+                                                self.add_to_cache(response['video_uid'], response['chunk_id'], response['data'])
                                 self.requests.remove(response['id'])
                                 self.results[response['id']] = response['data']
                         # else is request
                         else:
                                 request = tmp
-                                
+                                response = {'request': request['request'], 'id': request['id']}
+                                chunk = self.lookup_in_cache(request['video_uid'], request['chunk_id'])
+                                print(chunk)
+                                if chunk != None:
+                                      response['video_uid'] = chunk.video_uid
+                                      response['chunk_id'] = chunk.chunk_id
+                                      response['data'] = chunk.data
+                                      
+                                response_data = json.dumps(response).encode()
+                                self.sock.sendto(response_data, addr)  
+                                print(f'{addr}: {response}')
 
-                        print(f'{addr}: {data}')
             
         
         # listen for peer/server requests/response    
