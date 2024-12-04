@@ -44,16 +44,22 @@ class Node:
 
         # evict oldest item in cache
         def evict_cache(self):
-                least_recently_added = min(self.cache.values(), key=lambda obj: obj["time_added"])
-                evict_size = CHUNK_SIZE
-                print("least recent: ", least_recently_added)
-                del self.cache[least_recently_added.video_uid][least_recently_added.chunk_id]
-                self.cache_space -= evict_size
+                least_recently_added = None
+                for video_uid, chunks in self.cache.items():
+                        for chunk_id, chunk in chunks.items():
+                                if not least_recently_added or chunk.added < least_recently_added.added:
+                                        least_recently_added = video_uid
+
+
+                # Remove all chunks from video with least recently added
+                chunks_removed = len(self.cache[video_uid])
+                del self.cache[video_uid]
+
+                self.cache_space -= (CHUNK_SIZE * chunks_removed)
 
         def cache_is_full(self):
                 return self.cache_space <= 0
 
-       
         # nodes should cache different pieces of video so there's balance
         # prioritize first part of video? 
         def add_to_cache(self, video_uid, chunk_id, data):
@@ -97,11 +103,8 @@ class Node:
               request = {'request': request, 'id': rid, 'video_uid': video_uid, 'chunk_id': chunk_id}
               print(f'{self.addr}: {request}')
               request_data = json.dumps(request).encode()
-              
               self.requests.append(rid)
-              
               self.sock.sendto(request_data, peer_addr)
-              
               self.wait_response(rid)
               
               return rid
@@ -111,7 +114,7 @@ class Node:
                 # check if server response
                 if addr == SERVER_ADDR:
                         response = json.loads(zlib.decompress(data).decode())
-                        print(f'{addr}: {response}')
+                        # print(f'{addr}: {response}')
                         match response['request']:
                                 # check if registration was successful
                                 case 'REGISTER':
@@ -127,7 +130,11 @@ class Node:
                                 case 'GET_CHUNK':
                                         if self.lookup_in_cache(response['video_uid'], response['chunk_id']) == None:
                                                 self.add_to_cache(response['video_uid'], response['chunk_id'], response['data'])
-                                        
+                                # check if peers
+                                case 'GET_PEERS':
+                                        print("peers:", response['data'])
+                                        self.peers = response['data']
+
                         self.requests.remove(response['id'])
                         self.results[response['id']] = response['data']
                 
@@ -169,10 +176,14 @@ class Node:
 
 if __name__ == "__main__":
         n = Node()
+        v = Video()
+        # n.add_to_cache()
+
         listen_thread = Thread(target=n.listen, daemon=True, args=())
         listen_thread.start()
         n.request_server('REGISTER') 
         n.request_server('GET_MANIFEST')
+        n.request_server('GET_PEERS')
                 
         # GET CERTAIN VIDEO
         video_uid = n.manifest[0]
@@ -182,4 +193,4 @@ if __name__ == "__main__":
           time.sleep(1)
                         
         # DEREGISTER
-        #n.request_server('DEREGISTER')
+        n.request_server('DEREGISTER')
