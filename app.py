@@ -1,16 +1,16 @@
 import time
 import uuid
 from socket import socket, AF_INET, SOCK_DGRAM
-from threading import Thread
+from threading import Thread, Lock
 import json
 import random
 import zlib
 
-from common import CACHE_SIZE, CHUNK_SIZE, SERVER_ADDR, BUFFER_SIZE, Cached_Video_Chunk, Video
+from common import CACHE_SIZE, CHUNK_SIZE, SERVER_ADDR, BUFFER_SIZE, START_UP, Cached_Video_Chunk, Video
 
 ## Node class 
 class Node:
-        def __init__(self, log_file):
+        def __init__(self, log_file, latency, bandwidth):
                 self.peers = []  # peer addrs
                 self.cache = {}  # video cache: {video_id: {chunk_id : Cached_Video_Chunk}}
                 self.cache_space = CACHE_SIZE
@@ -26,14 +26,32 @@ class Node:
                 self.requests = []
                 self.results = {}
                 self.log_file = log_file
+                self.latency = float(latency)
+                self.bandwidth = int(bandwidth)
+                
+                self.lock = Lock()
+                
+                listen_thread = Thread(target=self.listen, daemon=True, args=())
+                listen_thread.start()
+                
+                self.request_server('REGISTER') 
+                self.request_server('GET_MANIFEST')
+                self.request_server('GET_PEERS')
         
         def log_stats(self, playback_latency, rebuffering_time):
                 with open(self.log_file, 'a') as log:
-                        log.write(f'{self.addr} {playback_latency} {rebuffering_time}\n')
+                        log.write(f'{time.time()}|{self.addr}|{playback_latency}|{rebuffering_time}\n')
+        
+        # get delay of tranmission
+        def get_delay(self, size):
+                bandwidth = int(random.gauss(self.bandwidth, .1 * self.bandwidth))
+                latency = int(random.gauss(self.latency, .1 * self.latency))
+                
+                return (size / bandwidth) + latency
                         
         # wait for server response
         def wait_response(self, request_id):
-                while request_id in n.requests:
+                while request_id in self.requests:
                         time.sleep(.01)
         
         def get_video_chunk(self, video_uid, chunk_id, peer_addr=None):
@@ -49,19 +67,35 @@ class Node:
                 for chunk_id, peer_list in self.video_chunk_to_peer[video_uid]['chunks'].items():
                         if peer_list == []:
                                 # REQUEST VIDEO FROM SERVER
-                                chunk_thread = Thread(target=n.get_video_chunk, daemon=True, args=(video_uid, chunk_id,))
+                                chunk_thread = Thread(target=self.get_video_chunk, daemon=True, args=(video_uid, chunk_id,))
                                 chunk_thread.start()
                         else:
                                 # REQUEST FROM PEERS
                                 for peer in peer_list:
-                                        chunk_thread = Thread(target=n.get_video_chunk, daemon=True, args=(video_uid, chunk_id, tuple(peer),))
+                                        chunk_thread = Thread(target=self.get_video_chunk, daemon=True, args=(video_uid, chunk_id, tuple(peer),))
                                         chunk_thread.start()
+                                
                 
+                buffer = 0
+                curr_chunk_id = 0
+                upt = None
+                rebuffer = 0
                 while video_uid not in self.cache.keys() or len(self.cache[video_uid]) < size / CHUNK_SIZE:
                         time.sleep(.01)
+                        if self.lookup_in_cache(video_uid, str(curr_chunk_id)):
+                                if curr_chunk_id == START_UP:
+                                        upt = time.time()
+                                        curr_chunk_id += CHUNK_SIZE
+                                        buffer += 1
+                                        #print('got chunk: ', curr_chunk_id)
+                        if upt != None:
+                                buffer -= .01
+                                if buffer < 0:
+                                        rebuffer += .01
                 
-                et = time.time()
-                self.log_stats(et-st, 0)
+                if upt == None:
+                        upt = time.time()
+                self.log_stats(upt-st, rebuffer)
                         
                            
 
@@ -94,7 +128,7 @@ class Node:
                 if video_uid not in self.cache.keys():
                         self.cache[video_uid] = {}
                 self.cache[video_uid][chunk_id] = cache_entry
-                self.print_cache()
+                #self.print_cache()
 
         # check if chunk is in my cache
         def lookup_in_cache(self, video_uid, chunk_id):
@@ -115,6 +149,8 @@ class Node:
               
               self.requests.append(rid)
               
+              time.sleep(self.get_delay(len(request_data))) 
+              
               self.sock.sendto(request_data, SERVER_ADDR)
               
               self.wait_response(rid)
@@ -128,6 +164,7 @@ class Node:
               print(f'{self.addr}: {request}')
               request_data = json.dumps(request).encode()
               self.requests.append(rid)
+              time.sleep(self.get_delay(len(request_data))) 
               self.sock.sendto(request_data, peer_addr)
               self.wait_response(rid)
               
@@ -135,59 +172,65 @@ class Node:
         
         # handle all requests/response   
         def handle(self, data, addr):
-                # check if server response
-                if addr == SERVER_ADDR:
-                        response = json.loads(zlib.decompress(data).decode())
-                        # print(f'{addr}: {response}')
-                        match response['request']:
-                                # check if registration was successful
-                                case 'REGISTER':
-                                        self.registered = True
-                                        self.id = response['data']
-                                # check if response to manifest request
-                                case 'GET_MANIFEST':
-                                        self.manifest = response['data']
-                                # check if response to chunk mapping request
-                                case 'GET_CHUNK_MAPPING':
-                                        self.video_chunk_to_peer[response['video_uid']] = response['data']
-                                # check if response to chunk request
-                                case 'GET_CHUNK':
-                                        if self.lookup_in_cache(response['video_uid'], response['chunk_id']) == None:
-                                                self.add_to_cache(response['video_uid'], response['chunk_id'], response['data'])
-                                # check if peers
-                                case 'GET_PEERS':
-                                        print("peers:", response['data'])
-                                        self.peers = response['data']
+                with self.lock:
+                        # check if server response
+                        if addr == SERVER_ADDR:
+                                response = json.loads(zlib.decompress(data).decode())
+                                #print(f'{addr}: {response}')
+                                # print(f'{addr}: {response}')
+                                match response['request']:
+                                        # check if registration was successful
+                                        case 'REGISTER':
+                                                self.registered = True
+                                                self.id = response['data']
+                                        # check if response to manifest request
+                                        case 'GET_MANIFEST':
+                                                self.manifest = response['data']
+                                        # check if response to chunk mapping request
+                                        case 'GET_CHUNK_MAPPING':
+                                                self.video_chunk_to_peer[response['video_uid']] = response['data']
+                                        # check if response to chunk request
+                                        case 'GET_CHUNK':
+                                                if self.lookup_in_cache(response['video_uid'], response['chunk_id']) == None:
+                                                        self.add_to_cache(response['video_uid'], response['chunk_id'], response['data'])
+                                        # check if peers
+                                        case 'GET_PEERS':
+                                                self.peers = response['data']
 
-                        self.requests.remove(response['id'])
-                        self.results[response['id']] = response['data']
-                
-                # else, request/response from peer
-                else:
-                        tmp = json.loads(data.decode())
-                        print(f'{addr}: {tmp}')
-                        
-                        # check if response to request
-                        if tmp['id'] in self.requests:
-                                response = tmp
-                                if self.lookup_in_cache(response['video_uid'], response['chunk_id']) == None:
-                                                self.add_to_cache(response['video_uid'], response['chunk_id'], response['data'])
                                 self.requests.remove(response['id'])
                                 self.results[response['id']] = response['data']
-                        # else is request
+                        
+                        # else, request/response from peer
                         else:
-                                request = tmp
-                                response = {'request': request['request'], 'id': request['id']}
-                                chunk = self.lookup_in_cache(request['video_uid'], request['chunk_id'])
-                                print(chunk)
-                                if chunk != None:
-                                      response['video_uid'] = chunk.video_uid
-                                      response['chunk_id'] = chunk.chunk_id
-                                      response['data'] = chunk.data
-                                      
-                                response_data = json.dumps(response).encode()
-                                self.sock.sendto(response_data, addr)  
-                                print(f'{addr}: {response}')
+                                tmp = json.loads(data.decode())
+                                #print(f'{addr}: {tmp}')
+                                
+                                # check if response to request
+                                if tmp['id'] in self.requests:
+                                        response = tmp
+                                        if self.lookup_in_cache(response['video_uid'], response['chunk_id']) == None and response['data'] != 'ERROR':
+                                                        self.add_to_cache(response['video_uid'], response['chunk_id'], response['data'])
+                                        self.requests.remove(response['id'])
+                                        try:
+                                                self.results[response['id']] = response['data']
+                                        except:
+                                                pass
+                                # else is request
+                                else:
+                                        request = tmp
+                                        response = {'request': request['request'], 'id': request['id']}
+                                        chunk = self.lookup_in_cache(request['video_uid'], request['chunk_id'])
+                                        if chunk != None:
+                                              response['video_uid'] = chunk.video_uid
+                                              response['chunk_id'] = chunk.chunk_id
+                                              response['data'] = chunk.data
+                                        else:
+                                              response['data'] = 'ERROR'
+                                              
+                                        response_data = json.dumps(response).encode()
+                                        time.sleep(self.get_delay(len(response_data) + CHUNK_SIZE)) 
+                                        self.sock.sendto(response_data, addr)  
+                                        #print(f'{addr}: {response}')
 
             
         
@@ -198,6 +241,9 @@ class Node:
                         request_thread = Thread(target=self.handle, daemon=True, args=(data, addr,))
                         request_thread.start()
 
+        def get_random_video(self):
+              self.get_video(random.choice(self.manifest))
+        
 if __name__ == "__main__":
         n = Node('log.txt')
         v = Video()

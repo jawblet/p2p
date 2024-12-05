@@ -8,6 +8,7 @@ MAX_TT_SIZE = 287600    # 287.6 MB
 AVG_TT_SIZE = 22000     # 22 MB = average size of 35s video, 1080p, 5 Mbps bitrate
 SERVER_ADDR = ('127.0.0.1', 4662)
 BUFFER_SIZE = 8192
+START_UP = 5
 
 ## Full video
 class Video:
