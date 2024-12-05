@@ -10,8 +10,8 @@ from common import CACHE_SIZE, CHUNK_SIZE, SERVER_ADDR, BUFFER_SIZE, Cached_Vide
 
 ## Node class 
 class Node:
-        def __init__(self):
-                self.peers = []  # peer uids
+        def __init__(self, log_file):
+                self.peers = []  # peer addrs
                 self.cache = {}  # video cache: {video_id: {chunk_id : Cached_Video_Chunk}}
                 self.cache_space = CACHE_SIZE
                 self.registered = False
@@ -25,37 +25,61 @@ class Node:
                 self.sock.bind(self.addr)
                 self.requests = []
                 self.results = {}
-              
+                self.log_file = log_file
+        
+        def log_stats(self, playback_latency, rebuffering_time):
+                with open(self.log_file, 'a') as log:
+                        log.write(f'{self.addr} {playback_latency} {rebuffering_time}\n')
+                        
         # wait for server response
         def wait_response(self, request_id):
                 while request_id in n.requests:
                         time.sleep(.01)
-                        
+        
+        def get_video_chunk(self, video_uid, chunk_id, peer_addr=None):
+                if not peer_addr:
+                        self.request_server('GET_CHUNK', video_uid, chunk_id) 
+                else:
+                        self.request_peer('GET_CHUNK', video_uid, chunk_id, peer_addr)
+               
         def get_video(self, video_uid):
+                st = time.time()
                 self.request_server('GET_CHUNK_MAPPING', video_uid)
-                for chunk_id, peer_list in self.video_chunk_to_peer[video_uid].items():
+                size = self.video_chunk_to_peer[video_uid]['size']
+                for chunk_id, peer_list in self.video_chunk_to_peer[video_uid]['chunks'].items():
                         if peer_list == []:
                                 # REQUEST VIDEO FROM SERVER
-                                self.request_server('GET_CHUNK', video_uid, chunk_id)
+                                chunk_thread = Thread(target=n.get_video_chunk, daemon=True, args=(video_uid, chunk_id,))
+                                chunk_thread.start()
                         else:
                                 # REQUEST FROM PEERS
                                 for peer in peer_list:
-                                        self.request_peer('GET_CHUNK', video_uid, chunk_id, tuple(peer))
+                                        chunk_thread = Thread(target=n.get_video_chunk, daemon=True, args=(video_uid, chunk_id, tuple(peer),))
+                                        chunk_thread.start()
+                
+                while video_uid not in self.cache.keys() or len(self.cache[video_uid]) < size / CHUNK_SIZE:
+                        time.sleep(.01)
+                
+                et = time.time()
+                self.log_stats(et-st, 0)
+                        
+                           
 
         # evict oldest item in cache
         def evict_cache(self):
-                least_recently_added = None
+                least_recently_added_video = None
+                least_recently_added_chunk = None
+                least_recently_added_time = None
                 for video_uid, chunks in self.cache.items():
                         for chunk_id, chunk in chunks.items():
-                                if not least_recently_added or chunk.added < least_recently_added.added:
-                                        least_recently_added = video_uid
+                                if not least_recently_added_time or chunk.added < least_recently_added_time:
+                                        least_recently_added_video = video_uid
+                                        least_recently_added_chunk = chunk_id
+                                        least_recently_added_time = chunk.added
 
+                del self.cache[least_recently_added_video][least_recently_added_chunk]
 
-                # Remove all chunks from video with least recently added
-                chunks_removed = len(self.cache[video_uid])
-                del self.cache[video_uid]
-
-                self.cache_space -= (CHUNK_SIZE * chunks_removed)
+                self.cache_space -= CHUNK_SIZE
 
         def cache_is_full(self):
                 return self.cache_space <= 0
@@ -175,7 +199,7 @@ class Node:
                         request_thread.start()
 
 if __name__ == "__main__":
-        n = Node()
+        n = Node('log.txt')
         v = Video()
         # n.add_to_cache()
 
