@@ -10,7 +10,7 @@ import sys
 from common import CACHE_SIZE, CHUNK_SIZE, SERVER_ADDR, BUFFER_SIZE, Video
 
 class Server:
-        def __init__(self, log_file, latency, bandwidth):
+        def __init__(self, log_file, latency, bandwidth, nvids):
                 self.uid = uuid.uuid4()
                 self.peers = []  # peer addrs
                 self.video_chunk_to_peer = {} # video mapping: {video_uid : {chunk_id : [peer addr list]}}
@@ -23,13 +23,14 @@ class Server:
                 self.latency = float(latency)
                 self.bandwidth = int(bandwidth)
                 self.lock = Lock()
+                self.nvids = nvids
                 
                 self.bootstrap()
                 self.listen()
         
         def bootstrap(self):
                 with self.lock:
-                        for _ in range(0,10):
+                        for _ in range(0,self.nvids):
                                 v = Video()
                                 self.video_to_chunk[v.uid] = v.chunks
                                 self.video_chunk_to_peer[v.uid] = {}
@@ -53,7 +54,7 @@ class Server:
         def handle_request(self, request_data, addr):
                 with self.lock:
                         request = json.loads(request_data.decode())
-                        print(f'{addr}: {request}')
+                        #print(f'{addr}: {request}')
                         
                         response = {'request': request['request'], 'id': request['id']}
                         
@@ -92,7 +93,7 @@ class Server:
                         data = zlib.compress(json.dumps(response).encode())
                         if response['request'] == 'GET_CHUNK':
                                 time.sleep(self.get_delay(len(data) + CHUNK_SIZE)) 
-                                self.log_stats(addr, len(data) + CHUNK_SIZE)
+                                self.log_stats(addr, len(data) + (CHUNK_SIZE * 1000))
                         else:
                                 time.sleep(self.get_delay(len(data)))
                                 self.log_stats(addr, len(data)) 
@@ -100,7 +101,7 @@ class Server:
               
         # listen for peer requests    
         def listen(self):
-                print('LISTENING FOR PEERS')
+                #print('LISTENING FOR PEERS')
                 while True:
                         data, addr = self.sock.recvfrom(BUFFER_SIZE)
                         request_thread = Thread(target=self.handle_request, daemon=True, args=(data, addr,))

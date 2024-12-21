@@ -27,4 +27,5 @@ class Cached_Video_Chunk:
                 self.chunk_id = chunk_id
                 self.data = data
                 self.added = time.time()
+                self.accessed = time.time()
                 

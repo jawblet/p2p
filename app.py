@@ -10,10 +10,10 @@ from common import CACHE_SIZE, CHUNK_SIZE, SERVER_ADDR, BUFFER_SIZE, START_UP, C
 
 ## Node class 
 class Node:
-        def __init__(self, log_file, latency, bandwidth):
+        def __init__(self, log_file, latency, bandwidth, type='P2P', cache_size=1, eviction_policy='lru'):
                 self.peers = []  # peer addrs
                 self.cache = {}  # video cache: {video_id: {chunk_id : Cached_Video_Chunk}}
-                self.cache_space = CACHE_SIZE
+                self.cache_space = cache_size * CACHE_SIZE
                 self.registered = False
                 self.manifest = []
                 self.video_chunk_to_peer = {} # video mapping: {video_uid : {chunk_id : [peer addr list]}}
@@ -28,6 +28,8 @@ class Node:
                 self.log_file = log_file
                 self.latency = float(latency)
                 self.bandwidth = int(bandwidth)
+                self.type = type
+                self.eviction_policy = eviction_policy
                 
                 self.lock = Lock()
                 
@@ -38,9 +40,9 @@ class Node:
                 self.request_server('GET_MANIFEST')
                 self.request_server('GET_PEERS')
         
-        def log_stats(self, playback_latency, rebuffering_time):
+        def log_stats(self, playback_latency, rebuffering_time, cache_size, cache_hit, server_hit, peer_hit, total):
                 with open(self.log_file, 'a') as log:
-                        log.write(f'{time.time()}|{self.addr}|{playback_latency}|{rebuffering_time}\n')
+                        log.write(f'{time.time()}|{self.addr}|{playback_latency}|{rebuffering_time}|{cache_size}|{cache_hit}|{server_hit}|{peer_hit}|{total}\n')
         
         # get delay of tranmission
         def get_delay(self, size):
@@ -64,12 +66,20 @@ class Node:
                 st = time.time()
                 self.request_server('GET_CHUNK_MAPPING', video_uid)
                 size = self.video_chunk_to_peer[video_uid]['size']
+                peer_cnt = 0
+                server_cnt = 0
+                cache_cnt = 0
                 for chunk_id, peer_list in self.video_chunk_to_peer[video_uid]['chunks'].items():
-                        if peer_list == []:
+                        if self.lookup_in_cache(video_uid, chunk_id) != None:
+                                cache_cnt += 1
+                                continue
+                        elif peer_list == [] or self.type == 'CS':
                                 # REQUEST VIDEO FROM SERVER
+                                server_cnt += 1
                                 chunk_thread = Thread(target=self.get_video_chunk, daemon=True, args=(video_uid, chunk_id,))
                                 chunk_thread.start()
                         else:
+                                peer_cnt += 1
                                 # REQUEST FROM PEERS
                                 for peer in peer_list:
                                         chunk_thread = Thread(target=self.get_video_chunk, daemon=True, args=(video_uid, chunk_id, tuple(peer),))
@@ -82,12 +92,11 @@ class Node:
                 rebuffer = 0
                 while video_uid not in self.cache.keys() or len(self.cache[video_uid]) < size / CHUNK_SIZE:
                         time.sleep(.01)
-                        if self.lookup_in_cache(video_uid, str(curr_chunk_id)):
-                                if curr_chunk_id == START_UP:
+                        if self.lookup_in_cache(video_uid, str(curr_chunk_id)) != None:
+                                if curr_chunk_id / CHUNK_SIZE == START_UP:
                                         upt = time.time()
-                                        curr_chunk_id += CHUNK_SIZE
-                                        buffer += 1
-                                        #print('got chunk: ', curr_chunk_id)
+                                buffer += 1
+                                curr_chunk_id += CHUNK_SIZE
                         if upt != None:
                                 buffer -= .01
                                 if buffer < 0:
@@ -95,25 +104,40 @@ class Node:
                 
                 if upt == None:
                         upt = time.time()
-                self.log_stats(upt-st, rebuffer)
+                self.log_stats(upt-st, rebuffer, self.cache_space, cache_cnt, server_cnt, peer_cnt, cache_cnt+server_cnt+peer_cnt)
                         
                            
 
         # evict oldest item in cache
         def evict_cache(self):
-                least_recently_added_video = None
-                least_recently_added_chunk = None
-                least_recently_added_time = None
-                for video_uid, chunks in self.cache.items():
-                        for chunk_id, chunk in chunks.items():
-                                if not least_recently_added_time or chunk.added < least_recently_added_time:
-                                        least_recently_added_video = video_uid
-                                        least_recently_added_chunk = chunk_id
-                                        least_recently_added_time = chunk.added
+                match self.eviction_policy:
+                        case 'lra':
+                                lra_video = None
+                                lra_chunk = None
+                                lra_time = None
+                                for video_uid, chunks in self.cache.items():
+                                        for chunk_id, chunk in chunks.items():
+                                                if not lra_time or chunk.added < lra_time:
+                                                        lra_video = video_uid
+                                                        lra_chunk = chunk_id
+                                                        lra_time = chunk.added
 
-                del self.cache[least_recently_added_video][least_recently_added_chunk]
+                                del self.cache[lra_video][lra_chunk]
+                                self.cache_space += CHUNK_SIZE
+                                
+                        case 'lru':
+                                lru_video = None
+                                lru_chunk = None
+                                lru_time = None
+                                for video_uid, chunks in self.cache.items():
+                                        for chunk_id, chunk in chunks.items():
+                                                if not lru_time or chunk.accessed < lru_time:
+                                                        lru_video = video_uid
+                                                        lru_chunk = chunk_id
+                                                        lru_time = chunk.added
 
-                self.cache_space -= CHUNK_SIZE
+                                del self.cache[lru_video][lru_chunk]
+                                self.cache_space += CHUNK_SIZE
 
         def cache_is_full(self):
                 return self.cache_space <= 0
@@ -129,11 +153,13 @@ class Node:
                         self.cache[video_uid] = {}
                 self.cache[video_uid][chunk_id] = cache_entry
                 #self.print_cache()
+                self.cache_space -= CHUNK_SIZE
 
         # check if chunk is in my cache
         def lookup_in_cache(self, video_uid, chunk_id):
                 if video_uid in self.cache.keys():
                         if chunk_id in self.cache[video_uid].keys():
+                                self.cache[video_uid][chunk_id].accessed = time.time()
                                 return self.cache[video_uid][chunk_id]
                         
                 return None
@@ -144,7 +170,7 @@ class Node:
         def request_server(self, request, video_uid=None, chunk_id=None):
               rid = str(uuid.uuid4())
               request = {'request': request, 'id': rid, 'video_uid': video_uid, 'chunk_id': chunk_id}
-              print(f'{self.addr}: {request}')
+              #print(f'{self.addr}: {request}')
               request_data = json.dumps(request).encode()
               
               self.requests.append(rid)
@@ -161,7 +187,7 @@ class Node:
         def request_peer(self, request, video_uid, chunk_id, peer_addr):
               rid = str(uuid.uuid4())
               request = {'request': request, 'id': rid, 'video_uid': video_uid, 'chunk_id': chunk_id}
-              print(f'{self.addr}: {request}')
+              #print(f'{self.addr}: {request}')
               request_data = json.dumps(request).encode()
               self.requests.append(rid)
               time.sleep(self.get_delay(len(request_data))) 
@@ -208,13 +234,14 @@ class Node:
                                 # check if response to request
                                 if tmp['id'] in self.requests:
                                         response = tmp
-                                        if self.lookup_in_cache(response['video_uid'], response['chunk_id']) == None and response['data'] != 'ERROR':
-                                                        self.add_to_cache(response['video_uid'], response['chunk_id'], response['data'])
-                                        self.requests.remove(response['id'])
-                                        try:
-                                                self.results[response['id']] = response['data']
-                                        except:
-                                                pass
+                                        if 'data' in response.keys() and response['data'] != None:
+                                              if self.lookup_in_cache(response['video_uid'], response['chunk_id']) == None:
+                                                              self.add_to_cache(response['video_uid'], response['chunk_id'], response['data'])
+                                              self.requests.remove(response['id'])
+                                              try:
+                                                      self.results[response['id']] = response['data']
+                                              except:
+                                                      pass
                                 # else is request
                                 else:
                                         request = tmp
@@ -225,7 +252,9 @@ class Node:
                                               response['chunk_id'] = chunk.chunk_id
                                               response['data'] = chunk.data
                                         else:
-                                              response['data'] = 'ERROR'
+                                              response['video_uid'] = request['video_uid']
+                                              response['chunk_id'] = request['chunk_id']
+                                              response['data'] = None
                                               
                                         response_data = json.dumps(response).encode()
                                         time.sleep(self.get_delay(len(response_data) + CHUNK_SIZE)) 
@@ -241,8 +270,10 @@ class Node:
                         request_thread = Thread(target=self.handle, daemon=True, args=(data, addr,))
                         request_thread.start()
 
-        def get_random_video(self):
-              self.get_video(random.choice(self.manifest))
+        def get_random_video(self, n=None):
+              if n == None:
+                      n = len(self.manifest)
+              self.get_video(random.choice(self.manifest[:n]))
         
 if __name__ == "__main__":
         n = Node('log.txt')
